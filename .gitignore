@@ -1,0 +1,6 @@
+.env
+venv/
+font
+summary
+__pycache__
+*.pdf
