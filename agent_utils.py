@@ -1,16 +1,16 @@
 import google.generativeai as genai
 from pypdf import PdfReader
 from fpdf import FPDF
-import fitz
+import fitz  # This is PyMuPDF
 import pytesseract
 from PIL import Image
 import io
 import re
 import requests
-import matplotlib.pyplot as plt  # still here if you use it elsewhere
+import matplotlib.pyplot as plt
 
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle, ListStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer,
     ListFlowable, ListItem, Image as ReportLabImage
@@ -18,11 +18,6 @@ from reportlab.platypus import (
 from reportlab.lib.enums import TA_LEFT
 from reportlab.lib import colors
 from reportlab.lib.utils import ImageReader
-
-# NEW imports for LaTeX rendering
-import katex          # render LaTeX → SVG
-import cairosvg       # convert SVG → PNG
-
 
 # This function is unchanged
 def extract_text_from_pdf(pdf_path):
@@ -224,32 +219,126 @@ def save_analysis_to_pdf(analysis_text, output_pdf_name, content_type='summary')
     story = []
     
     styles = getSampleStyleSheet()
+    
+    # Enhanced styling for better presentation
+    title_style = ParagraphStyle('Title', parent=styles['Heading1'],
+                                fontSize=16, spaceAfter=12, textColor=colors.darkblue,
+                                alignment=TA_LEFT)
     heading_style = ParagraphStyle('Heading', parent=styles['Heading2'],
-                                   fontSize=14, spaceAfter=10, textColor=colors.darkblue)
+                                   fontSize=14, spaceAfter=8, textColor=colors.darkblue,
+                                   spaceBefore=12)
+    subheading_style = ParagraphStyle('SubHeading', parent=styles['Heading3'],
+                                      fontSize=12, spaceAfter=6, textColor=colors.navy,
+                                      spaceBefore=8)
     body_style = ParagraphStyle('BodyStyle', parent=styles['Normal'],
-                                spaceAfter=6, leading=14, alignment=TA_LEFT)
+                                spaceAfter=4, leading=14, alignment=TA_LEFT,
+                                fontSize=10)
     bullet_style = ParagraphStyle('Bullet', parent=styles['Normal'],
-                                  fontSize=11, leftIndent=20, spaceAfter=6)
+                                  fontSize=10, leftIndent=15, spaceAfter=3,
+                                  textColor=colors.black)
+    emphasis_style = ParagraphStyle('Emphasis', parent=styles['Normal'],
+                                   fontSize=10, spaceAfter=4, textColor=colors.darkgreen,
+                                   fontName='Helvetica-Bold')
 
     if content_type == 'summary':
+        # Add a title
+        story.append(Paragraph("Research Paper Summary", title_style))
+        story.append(Spacer(1, 15))
+        
+        # Split into sections
         sections = analysis_text.split("## ")
-        for section in sections:
+        for section_index, section in enumerate(sections):
             if not section.strip():
                 continue
+                
             lines = section.strip().splitlines()
+            if not lines:
+                continue
+                
+            # Extract section title
             title = lines[0].strip()
-            story.append(Paragraph(title, heading_style))
-            story.append(Spacer(1, 6))
-            content_lines = [l.strip("-• ") for l in lines[1:] if l.strip()]
+            if title:
+                story.append(Paragraph(title, heading_style))
+                story.append(Spacer(1, 6))
+            
+            # Process content lines
+            content_lines = []
+            for line in lines[1:]:
+                line = line.strip()
+                if line and not line.startswith('---'):  # Skip separator lines
+                    content_lines.append(line)
+            
             if content_lines:
-                bullets = ListFlowable(
-                    [ListItem(Paragraph(line, bullet_style)) for line in content_lines],
-                    bulletType='bullet'
-                )
-                story.append(bullets)
-            story.append(Spacer(1, 12))
+                # Group content into paragraphs and bullet points
+                current_paragraph = []
+                bullet_items = []
+                
+                for line in content_lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                        
+                    # Handle bullet points
+                    if line.startswith('- ') or line.startswith('* ') or line.startswith('• '):
+                        # If we were building a paragraph, add it first
+                        if current_paragraph:
+                            story.append(Paragraph(' '.join(current_paragraph), body_style))
+                            story.append(Spacer(1, 4))
+                            current_paragraph = []
+                        
+                        clean_line = re.sub(r'^[-*•]\s*', '', line)  # Remove bullet prefix
+                        bullet_items.append(Paragraph(clean_line, bullet_style))
+                    
+                    # Handle subheadings within sections
+                    elif line.startswith('**') and line.endswith('**'):
+                        # If we have bullet items, add them first
+                        if bullet_items:
+                            bullet_list = ListFlowable(bullet_items, bulletType='bullet')
+                            story.append(bullet_list)
+                            story.append(Spacer(1, 6))
+                            bullet_items = []
+                        
+                        # If we have a paragraph, add it first
+                        if current_paragraph:
+                            story.append(Paragraph(' '.join(current_paragraph), body_style))
+                            story.append(Spacer(1, 6))
+                            current_paragraph = []
+                        
+                        # Add subheading
+                        subheading_text = line.replace('**', '').strip()
+                        story.append(Paragraph(subheading_text, subheading_style))
+                        story.append(Spacer(1, 4))
+                    
+                    # Regular text
+                    else:
+                        # If we have bullet items, add them first
+                        if bullet_items:
+                            bullet_list = ListFlowable(bullet_items, bulletType='bullet')
+                            story.append(bullet_list)
+                            story.append(Spacer(1, 6))
+                            bullet_items = []
+                        
+                        current_paragraph.append(line)
+                
+                # Add any remaining content
+                if current_paragraph:
+                    story.append(Paragraph(' '.join(current_paragraph), body_style))
+                    story.append(Spacer(1, 6))
+                
+                if bullet_items:
+                    bullet_list = ListFlowable(bullet_items, bulletType='bullet')
+                    story.append(bullet_list)
+                    story.append(Spacer(1, 8))
+            
+            # Add section separator (except after last section)
+            if section_index < len(sections) - 1:
+                story.append(Spacer(1, 12))
+                # Add a subtle separator line
+                story.append(Paragraph("<hr/>", ParagraphStyle('HR', textColor=colors.lightgrey)))
+                story.append(Spacer(1, 12))
 
     elif content_type == 'equations':
+        # ... (keep your existing equations code here) ...
         # Clean up the text and split into sections
         cleaned_text = re.sub(r'--- PAGE \d+ ---', '', analysis_text).strip()
         sections = re.split(r'\s*---\s*', cleaned_text)
@@ -341,7 +430,7 @@ def save_analysis_to_pdf(analysis_text, output_pdf_name, content_type='summary')
                         continue
                     if line.startswith('###'):
                         # Subheading
-                        story.append(Paragraph(line.replace('###', '').strip(), styles['Heading3']))
+                        story.append(Paragraph(line.replace('###', '').strip(), subheading_style))
                     elif line.startswith('*'):
                         # For single bullet points in regular text, just format as paragraph with bullet
                         story.append(Paragraph("• " + line.strip(' *'), body_style))
