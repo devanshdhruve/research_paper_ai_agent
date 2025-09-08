@@ -3,10 +3,8 @@ import argparse
 import sys
 from dotenv import load_dotenv
 
-# Add the current directory to Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Now import from your modules
 from models.gemini_client import GeminiClient
 from extractors.text_extractor import extract_text_from_pdf
 from extractors.citation_extractor import extract_citations_from_references
@@ -14,106 +12,102 @@ from processors.summarizer import get_multimodal_summary_from_gemini
 from processors.section_processor import get_section_from_gemini
 from generators.pdf_generator import save_analysis_to_pdf
 
-# NEW: Import memory components
+from datetime import datetime   
+
+# Memory components
 from memory.vector_db import ResearchMemory
 from utils.text_chunker import chunk_text, extract_paper_metadata
 
+def process_stored_paper(paper_id, section, gemini_client, memory):
+    """Process a paper that's already stored in memory"""
+    # Retrieve paper from memory
+    paper_data = memory.get_paper_by_id(paper_id)
+    if not paper_data:
+        print(f"❌ Paper {paper_id} not found in memory")
+        return None
+    
+    print(f"📖 Processing: {paper_data['metadata'].get('title', 'Unknown')}")
+    
+    # Get the actual PDF path for multimodal processing
+    pdf_path = paper_data['metadata']['file_path']
+    
+    # Process based on requested section
+    if section == "summary":
+        # For multimodal processing, we still need the PDF file
+        result = get_multimodal_summary_from_gemini(
+            pdf_path, paper_data['content'], gemini_client
+        )
+    elif section == "citations":
+        result = extract_citations_from_references(pdf_path)
+    else:
+        result = get_section_from_gemini(
+            pdf_path, paper_data['content'], section, gemini_client
+        )
+    
+    # Update metadata to mark as processed
+    memory.update_paper_metadata(paper_id, {
+        "processed": True,
+        f"processed_{section}": datetime.now().isoformat()
+    })
+    
+    return result
+
+def list_available_papers(memory):
+    """List all papers available in memory"""
+    papers = memory.get_all_papers()
+    print("\n📚 Papers in Memory:")
+    print("====================")
+    for i, paper_id in enumerate(papers, 1):
+        paper_data = memory.get_paper_by_id(paper_id)
+        if paper_data:
+            title = paper_data['metadata'].get('title', 'Unknown')
+            processed = "✅" if paper_data['metadata'].get('processed') else "⏳"
+            print(f"{i}. {processed} {title} ({paper_id})")
+
 def main():
-    """
-    The main function for the MULTIMODAL AI research agent.
-    """
-    # Configure API key
     load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         print("❌ Error: Gemini API key not found.")
         return
     
-    # Initialize Gemini client
     gemini_client = GeminiClient()
-    print("✅ Gemini API key configured successfully!")
-
-    # Argument parser
+    memory = ResearchMemory()
+    
     parser = argparse.ArgumentParser(description="AI Research Paper Agent")
     parser.add_argument("--section", type=str, default="summary",
-                        help="What to extract: summary | methodology | equation | citations | future_scope")
-    parser.add_argument("--pdf", type=str, required=True,
-                        help="Path to input PDF")
+                        help="summary | methodology | equation | citations | future_scope")
+    parser.add_argument("--pdf", type=str, help="Path to new PDF file")
+    parser.add_argument("--paper-id", type=str, help="Process paper from memory")
+    parser.add_argument("--list", action="store_true", help="List papers in memory")
+    
     args = parser.parse_args()
-
-    input_pdf_path = args.pdf
-
-    # Extract text
-    extracted_text = extract_text_from_pdf(input_pdf_path)
-    if not extracted_text:
-        print("Ending process due to text extraction failure.")
+    
+    if args.list:
+        list_available_papers(memory)
         return
     
-    # NEW: Initialize memory and store chunks
-    memory = ResearchMemory()
-
-    metadata = extract_paper_metadata(extracted_text)
-    metadata.update({
-        "file_path": input_pdf_path,
-        "section_processed": [args.section]
-    })
-
-    chunks = chunk_text(extracted_text)
-    paper_id = memory.store_chunks(extracted_text, chunks, metadata)
-
-    print(f"📚 Paper stored in memory with ID: {paper_id}")
-
-     # NEW: Search for similar papers before processing
-    if args.section == "summary":
-        similar_papers = memory.search_similar_papers(extracted_text[:500], n_results=3)
-        if similar_papers:
-            print(f"🔍 Found {len(similar_papers)} similar papers in memory")
-
-    # Run selected mode
-    base_name = os.path.basename(input_pdf_path)
-    file_name_without_ext = os.path.splitext(base_name)[0]
-
-    if args.section == "summary":
-        summary = get_multimodal_summary_from_gemini(input_pdf_path, extracted_text, gemini_client)
-        if not summary:
-            print("Ending process due to summary generation failure.")
-            return
-        output_pdf_name = f"{file_name_without_ext}_summary.pdf"
-        save_analysis_to_pdf(summary, output_pdf_name, content_type='summary')
-
-    elif args.section == "methodology":
-        section_text = get_section_from_gemini(input_pdf_path, extracted_text, "methodology", gemini_client)
-        if not section_text:
-            return
-        output_pdf_name = f"{file_name_without_ext}_methodology.pdf"
-        save_analysis_to_pdf(section_text, output_pdf_name, content_type='summary')
-
-    elif args.section in ["equation", "equations"]:
-        section_text = get_section_from_gemini(input_pdf_path, extracted_text, "equations", gemini_client)
-        if not section_text:
-            return
-        output_pdf_name = f"{file_name_without_ext}_equation_analysis.pdf"
-        save_analysis_to_pdf(section_text, output_pdf_name, content_type='equations')
-
-    elif args.section == "citations":
-        citations = extract_citations_from_references(input_pdf_path)
-        if not citations:
-            print("\n⚠️ No citations found.")
-        else:
-            print(f"\n📚 Extracted {len(citations)} Citations with Links:\n")
-            for i, c in enumerate(citations, 1):
-                print(f"{i}. {c['text']}")  # Fixed: changed 'reference' to 'text'
-                print(f"   ➡️ {c['link']}\n")
-
-    elif args.section == "future_scope":
-        section_text = get_section_from_gemini(input_pdf_path, extracted_text, "future_scope", gemini_client)
-        if not section_text:
-            return
-        output_pdf_name = f"{file_name_without_ext}_future_scope.pdf"
-        save_analysis_to_pdf(section_text, output_pdf_name, content_type='summary')
-
+    if args.paper_id:
+        # Process paper from memory
+        result = process_stored_paper(args.paper_id, args.section, gemini_client, memory)
+        if result:
+            # Save or display results
+            if args.section == "citations":
+                print(f"\n📚 Citations found: {len(result)}")
+                for i, citation in enumerate(result, 1):
+                    print(f"{i}. {citation['text']}")
+                    print(f"   🔗 {citation['link']}")
+            else:
+                output_name = f"{args.paper_id}_{args.section}.pdf"
+                save_analysis_to_pdf(result, output_name, content_type=args.section)
+        return
+    
+    if args.pdf:
+        # Process new PDF (your existing functionality)
+        # ... [your existing code for new PDF processing] ...
+        pass
     else:
-        print("❌ Unknown section. Use one of: summary | methodology | equation | citations | future_scope")
+        print("❌ Please specify either --pdf or --paper-id")
         return
 
 if __name__ == "__main__":
