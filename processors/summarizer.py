@@ -1,10 +1,23 @@
 from extractors.image_extractor import extract_images_and_captions
 
-def get_multimodal_summary_from_gemini(pdf_path, text_content, gemini_client):
+def get_multimodal_summary_from_gemini(pdf_path, text_content, gemini_client, similar_papers=None):
     figures_text, selected_images = extract_images_and_captions(pdf_path, max_selected=5, manual=False)
+    
+    # Add memory context to prompt
+    memory_context = ""
+    if similar_papers:
+        memory_context = f"""
+        RELATED RESEARCH CONTEXT:
+        I found {len(similar_papers)} similar papers in our database:
+        {', '.join([p['metadata'].get('title', 'Unknown title') for p in similar_papers])}
+        
+        Please consider this existing research when analyzing the new paper.
+        """
     
     prompt = f"""
     You are an expert research assistant. Analyze the following research paper thoroughly.
+    {memory_context}
+    
     Use the paper text, extracted figure captions, OCR text, and selected figure images
     to provide a clear, structured academic-style report.
 

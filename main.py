@@ -14,6 +14,10 @@ from processors.summarizer import get_multimodal_summary_from_gemini
 from processors.section_processor import get_section_from_gemini
 from generators.pdf_generator import save_analysis_to_pdf
 
+# NEW: Import memory components
+from memory.vector_db import ResearchMemory
+from utils.text_chunker import chunk_text, extract_paper_metadata
+
 def main():
     """
     The main function for the MULTIMODAL AI research agent.
@@ -44,6 +48,26 @@ def main():
     if not extracted_text:
         print("Ending process due to text extraction failure.")
         return
+    
+    # NEW: Initialize memory and store chunks
+    memory = ResearchMemory()
+
+    metadata = extract_paper_metadata(extracted_text)
+    metadata.update({
+        "file_path": input_pdf_path,
+        "section_processed": [args.section]
+    })
+
+    chunks = chunk_text(extracted_text)
+    paper_id = memory.store_chunks(extracted_text, chunks, metadata)
+
+    print(f"📚 Paper stored in memory with ID: {paper_id}")
+
+     # NEW: Search for similar papers before processing
+    if args.section == "summary":
+        similar_papers = memory.search_similar_papers(extracted_text[:500], n_results=3)
+        if similar_papers:
+            print(f"🔍 Found {len(similar_papers)} similar papers in memory")
 
     # Run selected mode
     base_name = os.path.basename(input_pdf_path)
