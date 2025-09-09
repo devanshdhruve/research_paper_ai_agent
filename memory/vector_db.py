@@ -85,3 +85,56 @@ class ResearchMemory:
         except:
             return None
         return None
+    
+    def get_all_paper_metadata(self) -> List[Dict]:
+        """
+        Retrieve metadata for all papers (fast, for listing only)
+        Returns list of metadata dictionaries without content
+        """
+        try:
+            # Get all items but only include metadatas
+            results = self.collection.get(include=["metadatas"])
+        
+            if not results["ids"]:
+                return []
+        
+            # Use dict to get unique papers based on paper_id in metadata
+            unique_papers = {}
+        
+            for metadata in results["metadatas"]:
+                paper_id = metadata.get("paper_id")
+                if paper_id and paper_id not in unique_papers:
+                    # Create a copy to avoid modifying original metadata
+                    paper_metadata = metadata.copy()
+                    unique_papers[paper_id] = paper_metadata
+        
+            return list(unique_papers.values())
+        
+        except Exception as e:
+            print(f"Error retrieving paper metadata: {e}")
+            return []
+
+    def get_paper_by_id(self, paper_id: str) -> Optional[Dict]:
+        """
+        Retrieve a specific paper by its ID with full content
+        For processing, summarization, etc.
+        """
+        try:
+            # Get all chunks for this paper
+            results = self.collection.get(
+                where={"paper_id": paper_id},
+                include=["documents", "metadatas"]
+            )
+        
+            if results["ids"]:
+                # Reconstruct full paper content from chunks
+                full_content = " ".join(results["documents"])
+                return {
+                    "id": paper_id,
+                    "content": full_content,
+                    "metadata": results["metadatas"][0]  # Metadata is same for all chunks
+                }
+        except Exception as e:
+            print(f"Error retrieving paper {paper_id}: {e}")
+            return None
+        return None
