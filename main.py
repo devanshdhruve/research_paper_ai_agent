@@ -100,6 +100,73 @@ def list_available_papers(memory, show_numbers=False):
     
     return papers_metadata
 
+def ask_question_about_paper(memory, gemini_client, paper_id=None):
+    """
+    Interactive Q&A about a paper using semantic search and Gemini.
+    This is the foundation of the chat feature.
+    """
+    if paper_id is None:
+        # If no paper_id provided, let the user select one
+        paper_id = select_paper_interactively(memory)
+        if not paper_id:
+            return
+
+    # Get paper info for context
+    paper_data = memory.get_paper_by_id(paper_id)
+    if not paper_data:
+        print(f"❌ Paper {paper_id} not found.")
+        return
+
+    paper_title = paper_data['metadata'].get('title', 'Unknown Title')
+    print(f"\n💬 You are now chatting about: {paper_title}")
+    print("Type your questions (e.g., 'What was the methodology?', 'Explain the results'). Type 'quit' to exit.\n")
+
+    while True:
+        user_question = input("You: ").strip()
+        
+        if user_question.lower() in ['quit', 'exit', 'q']:
+            print("Ending conversation.")
+            break
+            
+        if not user_question:
+            continue
+
+        print("🤖 Thinking...")
+        
+        try:
+            # 1. RETRIEVAL: Use the new method to find relevant context
+            filter_dict = {"paper_id": paper_id} # Search only within this paper
+            relevant_contexts = memory.get_relevant_context(user_question, n_results=3, filter_dict=filter_dict)
+            
+            if not relevant_contexts:
+                print("I couldn't find any relevant information in the paper to answer that.")
+                continue
+
+            # 2. AUGMENTATION: Prepare the context for the LLM
+            context_for_llm = "\n\n---\n\n".join([f"From the section '{ctx['source'].get('title', 'Unknown')}':\n{ctx['text']}" for ctx in relevant_contexts])
+            
+            # 3. GENERATION: Craft a prompt and ask Gemini
+            prompt = f"""
+            You are a helpful research assistant. Answer the user's question based ONLY on the following excerpts from a research paper.
+            Do not use any outside knowledge. If the answer isn't in the text, say so.
+
+            PAPER TITLE: {paper_title}
+
+            EXCERPTS FROM THE PAPER:
+            {context_for_llm}
+
+            USER'S QUESTION: {user_question}
+
+            ANSWER:
+            """
+            
+            # Use your existing Gemini client to get the answer
+            answer = gemini_client.generate_content(prompt) 
+            print(f"\nAssistant: {answer}\n")
+            
+        except Exception as e:
+            print(f"❌ An error occurred: {e}")
+
 def select_paper_interactively(memory):
     """Let user select a paper by number"""
     papers_metadata = list_available_papers(memory, show_numbers=True)
@@ -143,11 +210,15 @@ def main():
     parser.add_argument("--select", action="store_true", help="Select paper interactively from list")
     parser.add_argument("--list", action="store_true", help="List papers in memory")
     parser.add_argument("--all", action="store_true", help="Process all papers in memory for the given section")
-    
+    parser.add_argument("--ask", action="store_true", help="Start interactive Q&A about a paper")
     args = parser.parse_args()
     
     if args.list:
         list_available_papers(memory)
+        return
+    elif args.ask:
+        # This starts the interactive chat/Q&A feature
+        ask_question_about_paper(memory, gemini_client)
         return
     
     # Handle paper selection

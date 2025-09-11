@@ -1,4 +1,3 @@
-
 # Research Paper Analysis System
 
 An intelligent AI-powered platform designed to help researchers, students, and academics automatically analyze, summarize, and extract valuable insights from research papers using Google's Gemini AI and vector database technology.

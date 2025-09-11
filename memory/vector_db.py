@@ -3,6 +3,7 @@ from chromadb.config import Settings
 import uuid
 from typing import List, Dict, Optional
 from datetime import datetime
+from sentence_transformers import SentenceTransformer
 
 class ResearchMemory:
     def __init__(self, persist_dir: str = "./chroma_db"):
@@ -10,6 +11,10 @@ class ResearchMemory:
         Initialize ChromaDB for storing research papers
         """
         self.client = chromadb.PersistentClient(path=persist_dir)
+
+        #Initialize the sentence transformer model
+        #use the same model the chromadb is using it
+        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
         
         # Create collection for research papers
         self.collection = self.client.get_or_create_collection(
@@ -45,8 +50,12 @@ class ResearchMemory:
         """
         Search for papers similar to the query
         """
+
+        #Generate the query for user embedding
+        query_embedding = self.embedding_model.encode(query).tolist()
+
         results = self.collection.query(
-            query_texts=[query],
+            query_embeddings=[query_embedding],
             n_results=n_results,
             include=["documents", "metadatas", "distances"]
         )
@@ -138,3 +147,36 @@ class ResearchMemory:
             print(f"Error retrieving paper {paper_id}: {e}")
             return None
         return None
+    
+    def get_relevant_context(self, query: str, n_results: int = 3, filter_dict: Optional[Dict] = None) -> List[Dict]:
+        """
+        RETRIEVAL FUNCTION FOR CHAT AGENT (RAG)
+        Finds the most relevant text passages from the database to answer a query.
+        Returns a list of dicts with the text and its source metadata.
+
+        Args:
+            query: The user's question (e.g., "Why did the author use method X?")
+            n_results: Number of relevant text chunks to retrieve.
+            filter_dict: Optional metadata filter (e.g., {"paper_id": "123..."} to search only one paper)
+        """
+        # Generate embedding for the query
+        query_embedding = self.embedding_model.encode(query).tolist()
+        
+        # Query the database
+        results = self.collection.query(
+            query_embeddings=[query_embedding],
+            n_results=n_results,
+            where=filter_dict, # Use the filter if provided
+            include=["documents", "metadatas"]
+        )
+        
+        # Format the results for the LLM
+        relevant_contexts = []
+        for i in range(len(results["ids"][0])):
+            context = {
+                "text": results["documents"][0][i],
+                "source": results["metadatas"][0][i] # Includes title, authors, paper_id etc.
+            }
+            relevant_contexts.append(context)
+        
+        return relevant_contexts
